@@ -41,9 +41,49 @@ func (h *AccountHandler) CreateAccount(c *gin.Context) {
 	c.JSON(200, gin.H{"message": "account created"})
 }
 
+func (h *AccountHandler) Rename(c *gin.Context) {
+	var req RenameRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(apierror.ClassifyHTTPStatus(err), gin.H{"error": err.Error()})
+		return
+	}
+	accountID, err := getAccountID(c)
+	if err != nil {
+		c.JSON(apierror.ClassifyHTTPStatus(err), gin.H{"error": err.Error()})
+		return
+	}
+	token, err := h.accountService.Rename(c.Request.Context(), accountID, req.NewUsername)
+	if err != nil {
+		if errors.Is(err, ErrNewUsernameRequired) {
+			c.JSON(apierror.ClassifyHTTPStatus(err), gin.H{"error": err.Error()})
+			return
+		}
+		if errors.Is(err, ErrUsernameTaken) {
+			c.JSON(409, gin.H{"error": err.Error()})
+			return
+		}
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(404, gin.H{"error": "account not found"})
+			return
+		}
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(200, gin.H{"token": token})
+}
 
-
-
+func (h *AccountHandler) ChangePassword(c *gin.Context) {
+	var req ChangePasswordRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(apierror.ClassifyHTTPStatus(err), gin.H{"error": err.Error()})
+		return
+	}
+	if err := h.accountService.ChangePassword(c.Request.Context(), req.Username, req.OldPassword, req.NewPassword); err != nil {
+		c.JSON(400, gin.H{"error": "unsuccessfully password changed"})
+		return
+	}
+	c.JSON(200, gin.H{"message": "successfully password changed"})
+}
 
 func (h *AccountHandler) FindByID(c *gin.Context) {
 	var req FindByIDRequest
@@ -105,9 +145,71 @@ func (h *AccountHandler) Logout(c *gin.Context) {
 	c.JSON(200, gin.H{"message": "account logged out"})
 }
 
+func (h *AccountHandler) UploadAvatar(c *gin.Context) {
+	accountID, err := getAccountID(c)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
+		return
+	}
+	f, err := c.FormFile("file")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "missing file"})
+		return
+	}
+	const maxSize = 10 << 20
+	if f.Size <= 0 || f.Size > maxSize {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid file size"})
+		return
+	}
+	ext := strings.ToLower(filepath.Ext(f.Filename))
+	switch ext {
+	case ".jpg", ".jpeg", ".png", ".webp":
+	default:
+		c.JSON(http.StatusBadRequest, gin.H{"error": "only .jpg/.jpeg/.png/.webp allowed"})
+		return
+	}
+	dir := filepath.Join(".run", "uploads", "avatars", strconv.FormatUint(uint64(accountID), 10))
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	filename, err := randHex(16)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	filename = filename + ext
+	absPath := filepath.Join(dir, filename)
+	if err := c.SaveUploadedFile(f, absPath); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	urlPath := path.Join("/static", "avatars", strconv.FormatUint(uint64(accountID), 10), filename)
+	avatarURL := buildAbsoluteURL(c, urlPath)
+	if err := h.accountService.UpdateAvatar(c.Request.Context(), accountID, avatarURL); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"avatar_url": avatarURL})
+}
 
-
-
+func (h *AccountHandler) UpdateProfile(c *gin.Context) {
+	accountID, err := getAccountID(c)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
+		return
+	}
+	var req UpdateProfileRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(apierror.ClassifyHTTPStatus(err), gin.H{"error": err.Error()})
+		return
+	}
+	if err := h.accountService.UpdateProfile(c.Request.Context(), accountID, &req); err != nil {
+		c.JSON(apierror.ClassifyHTTPStatus(err), gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "profile updated"})
+}
 
 func (h *AccountHandler) Refresh(c *gin.Context) {
 	var req RefreshRequest

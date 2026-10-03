@@ -44,9 +44,64 @@ func (as *AccountService) CreateAccount(ctx context.Context, account *Account) e
 	return nil
 }
 
+// Rename 修改用户名并返回携带新用户名的访问令牌。
+func (as *AccountService) Rename(ctx context.Context, accountID uint, newUsername string) (string, error) {
+	if newUsername == "" {
+		return "", ErrNewUsernameRequired
+	}
 
+	// JWT 中包含用户名，因此改名时必须重新签发访问令牌。
+	token, err := auth.GenerateToken(accountID, newUsername)
+	if err != nil {
+		return "", err
+	}
 
+	// 仓储在同一事务中更新用户名和令牌；唯一键冲突转成“用户名已占用”。
+	if err := as.accountRepository.RenameWithToken(ctx, accountID, newUsername, token); err != nil {
+		var mysqlErr *mysql.MySQLError
+		if errors.As(err, &mysqlErr) && mysqlErr.Number == 1062 {
+			return "", ErrUsernameTaken
+		}
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return "", err
+		}
+		return "", err
+	}
+	// 数据库成功后尽力刷新会话缓存；缓存失败只记录日志，不回滚改名。
+	if as.cache != nil {
+		cacheCtx, cancel := context.WithTimeout(ctx, 50*time.Millisecond)
+		defer cancel()
 
+		if err := as.cache.SetBytes(cacheCtx, as.cache.Key("account:%d", accountID), []byte(token), 24*time.Hour); err != nil {
+			log.Printf("failed to set cache: %v", err)
+		}
+	}
+	return token, nil
+}
+
+// ChangePassword 验证旧密码、保存新密码哈希，然后退出该账户的当前会话。
+func (as *AccountService) ChangePassword(ctx context.Context, username, oldPassword, newPassword string) error {
+	account, err := as.FindByUsername(ctx, username)
+	if err != nil {
+		return err
+	}
+	// 先证明调用方知道旧密码，才能覆盖密码哈希。
+	if err := bcrypt.CompareHashAndPassword([]byte(account.Password), []byte(oldPassword)); err != nil {
+		return err
+	}
+	passwordHash, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
+	if err != nil {
+		return err
+	}
+	if err := as.accountRepository.ChangePassword(ctx, account.ID, string(passwordHash)); err != nil {
+		return err
+	}
+	// 密码更新后清理访问/刷新令牌，避免旧登录会话继续使用。
+	if err := as.Logout(ctx, account.ID); err != nil {
+		return err
+	}
+	return nil
+}
 
 // FindByID 按账户 ID 查询完整账户；密码和令牌依靠模型的 json:"-" 避免输出。
 func (as *AccountService) FindByID(ctx context.Context, id uint) (*Account, error) {
@@ -136,14 +191,31 @@ func (as *AccountService) Logout(ctx context.Context, accountID uint) error {
 	return as.accountRepository.Logout(ctx, account.ID)
 }
 
-
+// UpdateAvatar 更新指定账户的头像地址；上传文件由 handler 负责。
+func (as *AccountService) UpdateAvatar(ctx context.Context, accountID uint, avatarURL string) error {
+	return as.accountRepository.UpdateAvatar(ctx, accountID, avatarURL)
+}
 
 // FindAll 读取全部账户；当前用于刷新令牌缓存未命中时的数据库兜底。
 func (as *AccountService) FindAll(ctx context.Context) ([]*Account, error) {
 	return as.accountRepository.FindAll(ctx)
 }
 
-
+// UpdateProfile 仅更新请求中非空的资料字段，不将未提供字段覆盖为空。
+func (as *AccountService) UpdateProfile(ctx context.Context, accountID uint, req *UpdateProfileRequest) error {
+	// 先按原始字符串是否非空判断，再去掉两端空白；空字符串跳过，纯空白会被更新为空。
+	updates := map[string]interface{}{}
+	if req.Bio != "" {
+		updates["bio"] = strings.TrimSpace(req.Bio)
+	}
+	if req.AvatarURL != "" {
+		updates["avatar_url"] = strings.TrimSpace(req.AvatarURL)
+	}
+	if len(updates) == 0 {
+		return errors.New("nothing to update")
+	}
+	return as.accountRepository.UpdateFields(ctx, accountID, updates)
+}
 
 // RefreshAccessToken 根据当前保存的刷新令牌签发新访问令牌，不轮换刷新令牌。
 func (as *AccountService) RefreshAccessToken(ctx context.Context, refreshToken string) (string, uint, string, error) {
