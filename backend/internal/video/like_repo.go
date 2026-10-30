@@ -51,6 +51,71 @@ func (r *LikeRepository) DeleteByVideoAndAccount(ctx context.Context, videoID, a
 	return res.RowsAffected > 0, res.Error
 }
 
+// ApplyLikeTx 在单个事务内插入点赞记录并累加点赞数与累计热度。
+// 唯一键冲突表示该用户已点赞（消息重复消费）：不改变计数，返回 applied=false 且不报错。
+func (r *LikeRepository) ApplyLikeTx(ctx context.Context, like *Like) (applied bool, err error) {
+	if like == nil || like.VideoID == 0 || like.AccountID == 0 {
+		return false, nil
+	}
+	err = r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(like).Error; err != nil {
+			// MySQL 的唯一键冲突只终止当前语句、不终止事务；返回 nil 让事务
+			// 提交为无变更，等价于幂等跳过，无需改用 ON DUPLICATE KEY UPDATE。
+			if isDupKey(err) {
+				return nil
+			}
+			return err
+		}
+		// 计数与点赞记录同事务提交，任一步失败都会回滚刚插入的记录。
+		if err := tx.Model(&Video{}).Where("id = ?", like.VideoID).
+			UpdateColumn("likes_count", gorm.Expr("GREATEST(likes_count + 1, 0)")).Error; err != nil {
+			return err
+		}
+		if err := tx.Model(&Video{}).Where("id = ?", like.VideoID).
+			UpdateColumn("popularity", gorm.Expr("GREATEST(popularity + 1, 0)")).Error; err != nil {
+			return err
+		}
+		applied = true
+		return nil
+	})
+	if err != nil {
+		return false, err
+	}
+	return applied, nil
+}
+
+// ApplyUnlikeTx 在单个事务内删除点赞记录并扣减点赞数与累计热度。
+// 没有可删除的点赞记录表示重复取消：不改变计数，返回 applied=false 且不报错。
+func (r *LikeRepository) ApplyUnlikeTx(ctx context.Context, videoID, accountID uint) (applied bool, err error) {
+	if videoID == 0 || accountID == 0 {
+		return false, nil
+	}
+	err = r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		res := tx.Where("video_id = ? AND account_id = ?", videoID, accountID).Delete(&Like{})
+		if res.Error != nil {
+			return res.Error
+		}
+		// 删除结果才是最终状态依据：0 行说明已被其他请求取消，不能重复扣减计数。
+		if res.RowsAffected == 0 {
+			return nil
+		}
+		if err := tx.Model(&Video{}).Where("id = ?", videoID).
+			UpdateColumn("likes_count", gorm.Expr("GREATEST(likes_count - 1, 0)")).Error; err != nil {
+			return err
+		}
+		if err := tx.Model(&Video{}).Where("id = ?", videoID).
+			UpdateColumn("popularity", gorm.Expr("GREATEST(popularity - 1, 0)")).Error; err != nil {
+			return err
+		}
+		applied = true
+		return nil
+	})
+	if err != nil {
+		return false, err
+	}
+	return applied, nil
+}
+
 func (r *LikeRepository) IsLiked(ctx context.Context, videoID, accountID uint) (bool, error) {
 	var count int64
 	err := r.db.WithContext(ctx).Model(&Like{}).

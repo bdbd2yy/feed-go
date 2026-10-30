@@ -111,22 +111,13 @@ func (w *LikeWorker) applyLike(ctx context.Context, userID, videoID uint) error 
 		return nil
 	}
 
-	created, err := w.likes.LikeIgnoreDuplicate(ctx, &video.Like{
+	// 点赞记录、点赞数与累计热度在同一事务内落库；重复消费不改变计数。
+	_, err = w.likes.ApplyLikeTx(ctx, &video.Like{
 		VideoID:   videoID,
 		AccountID: userID,
 		CreatedAt: time.Now(),
 	})
-	if err != nil {
-		return err
-	}
-	if !created {
-		return nil
-	}
-
-	if err := w.videos.ChangeLikesCount(ctx, videoID, 1); err != nil {
-		return err
-	}
-	return w.videos.ChangePopularity(ctx, videoID, 1)
+	return err
 }
 
 func (w *LikeWorker) applyUnlike(ctx context.Context, userID, videoID uint) error {
@@ -138,16 +129,7 @@ func (w *LikeWorker) applyUnlike(ctx context.Context, userID, videoID uint) erro
 		return nil
 	}
 
-	deleted, err := w.likes.DeleteByVideoAndAccount(ctx, videoID, userID)
-	if err != nil {
-		return err
-	}
-	if !deleted {
-		return nil
-	}
-
-	if err := w.videos.ChangeLikesCount(ctx, videoID, -1); err != nil {
-		return err
-	}
-	return w.videos.ChangePopularity(ctx, videoID, -1)
+	// 删除点赞记录与扣减计数在同一事务内完成；重复消费不改变计数。
+	_, err = w.likes.ApplyUnlikeTx(ctx, videoID, userID)
+	return err
 }
