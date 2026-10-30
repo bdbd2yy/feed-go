@@ -1,6 +1,6 @@
 # feedsystem_video_go
 
-> 项目介绍：本项目是一款由 Go + Vue 3 开发的短视频 Feed 流系统，提供账号、视频、点赞、评论、关注（Social）、Feed、私信与通知接口，并通过 Redis、RabbitMQ、分片上传、SSE 与 Docker Compose 提升性能、体验和部署效率。
+> 项目介绍：本项目是一款由 Go + React 19 开发的短视频 Feed 流系统，提供账号、视频、点赞、评论、关注（Social）、Feed、私信与通知接口，并通过 Redis、RabbitMQ、分片上传、SSE 与 Docker Compose 提升性能、体验和部署效率。
 
 # 技术栈
 
@@ -16,8 +16,25 @@
 | 文件存储        | Local Disk（可替换对象存储） | 视频与封面文件存放本地目录（生产可替换为 OSS/S3/MinIO）。    |
 | 容器化/依赖编排 | Docker / Docker Compose      | 一键拉起 RabbitMQ 等依赖（可配合 `./start.sh`），便于本地联调与部署环境一致性。 |
 | 接口调试        | Postman Collection           | `test/postman.json`：预置变量、批量跑接口与部分断言脚本。    |
-| 前端            | Vue 3 + Vite + Pinia         | 前端工程 `frontend/`，通过 Vite 代理 `/api` 对接后端，提供沉浸式播放、发布、主页、私信等页面。 |
+| 前端框架        | React 19 + TypeScript + Vite 8 | `frontend/` 单页应用，React Router 7 管理路由并按页面懒加载。 |
+| 前端数据        | TanStack Query 5             | 管理请求缓存、分页、刷新和写操作后的查询失效；认证状态独立存储并通过 React 订阅。 |
+| 界面组件        | Base UI + Tailwind CSS 4      | 自有基础组件与语义主题变量，支持浅深色主题、响应式布局和键盘交互；Phosphor Icons 提供图标。 |
+| 前端工程        | npm + Vitest + Prettier       | 锁定依赖、测试关键业务逻辑、统一代码格式；推荐 Node.js 24，Docker 使用同版本构建。 |
 | 可观测性        | pprof / healthz              | `GET /healthz` 健康检查；本地 pprof 默认 API `localhost:6060`、Worker `localhost:6061`。 |
+
+## 前端设计
+
+前端入口为 `frontend/src/main.tsx`，依次挂载错误边界、TanStack Query Provider 和 BrowserRouter。`src/App.tsx` 定义路由和登录保护，`components/AppShell.tsx` 提供侧栏、搜索、主题切换和移动导航；页面位于 `src/pages/`，按需加载。
+
+基础组件集中在 `src/components/ui/`。按钮提供主操作、次操作、弱操作和危险操作变体，统一尺寸、加载状态和禁用行为；表单字段关联标签与输入控件；弹窗、抽屉和标签页复用 Base UI 的焦点及键盘管理。主题变量、组件样式、页面布局分别位于 `styles/tokens.css`、`styles/components.css` 和 `styles/layout.css`。
+
+认证由 `src/lib/auth.ts` 管理，使用 `useSyncExternalStore` 订阅，保留 `access_token`、`refresh_token` 本地存储键。API Client 在 401 时共享一次刷新请求并重试；账号切换或退出会取消查询并清空缓存。受保护页面在未登录时跳转登录页，并保留登录后的返回地址。
+
+发现页提供最新推荐、关注流和点赞榜，默认网格浏览，也可切换沉浸播放。每页请求 12 条，网格通过“加载更多”翻页，沉浸模式在接近末尾时自动预取，并仅保留当前视频及前后相邻视频的播放器。搜索只过滤当前已加载的标题与作者，不是服务端全量搜索。人气热榜使用独立路由 `/hot`；私信会话每 15 秒刷新一次。
+
+视频上传由 `src/lib/upload.ts` 处理：5 MB 分片、文件与分片 MD5 校验、最多三路并发，每片最多三次尝试。重新提交同一文件时复用服务端返回的已上传分片；失败后等待正在执行的分片结束，再允许用户重试。
+
+开发环境通过 Vite 代理 `/api` 和 `/static`；部署时由 Nginx 托管静态产物、回退客户端路由并反向代理后端接口与媒体。具体页面、运行命令及组件使用约定见 [前端开发文档](frontend/README.md)。
 
 ## 模块设计
 

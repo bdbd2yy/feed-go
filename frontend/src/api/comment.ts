@@ -8,9 +8,17 @@ export async function listAll(videoId: number) {
 }
 
 export function publish(videoId: number, content: string) {
-  return postJson<MessageResponse>('/comment/publish', { video_id: videoId, content }, { authRequired: true })
+  return postJson<MessageResponse>(
+    '/comment/publish',
+    { video_id: videoId, content },
+    { authRequired: true },
+  )
 }
 
 export function remove(commentId: number) {
-  return postJson<MessageResponse>('/comment/delete', { comment_id: commentId }, { authRequired: true })
+  return postJson<MessageResponse>(
+    '/comment/delete',
+    { comment_id: commentId },
+    { authRequired: true },
+  )
 }

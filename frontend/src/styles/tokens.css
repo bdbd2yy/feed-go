@@ -1,0 +1,145 @@
+:root {
+  color-scheme: light;
+  --canvas: #fafaf8;
+  --surface: #ffffff;
+  --surface-soft: #f3f3f0;
+  --ink: #252722;
+  --muted: #63685e;
+  --border: #e5e6e0;
+  --primary: #414f37;
+  --primary-hover: #303d28;
+  --on-primary: #fff;
+  --accent: #eaf0e3;
+  --accent-ink: #435738;
+  --danger: #b83b42;
+  --success: #407346;
+  --focus: #7d9065;
+  --radius: 10px;
+  --shadow: 0 3px 12px #25272206, 0 1px 2px #25272205;
+  --overlay-shadow: 0 24px 80px #171c2430;
+  font-family:
+    -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  font-size: 14px;
+  line-height: 1.6;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+:root.dark {
+  color-scheme: dark;
+  --canvas: #171a17;
+  --surface: #1e221e;
+  --surface-soft: #272d27;
+  --ink: #e9ede5;
+  --muted: #a4ad9e;
+  --border: #343b32;
+  --primary: #c7d8af;
+  --primary-hover: #d6e5c4;
+  --on-primary: #26311e;
+  --accent: #303b2a;
+  --accent-ink: #c7d8af;
+  --danger: #ff9298;
+  --success: #8bce94;
+  --focus: #b0c997;
+  --shadow: 0 2px 10px #00000010;
+}
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+body {
+  margin: 0;
+  background: var(--canvas);
+  color: var(--ink);
+}
+button,
+input,
+textarea {
+  font: inherit;
+}
+button,
+a,
+input,
+textarea {
+  -webkit-tap-highlight-color: transparent;
+}
+button {
+  cursor: pointer;
+}
+a {
+  color: inherit;
+  text-decoration: none;
+}
+button:disabled {
+  cursor: not-allowed;
+}
+button,
+a,
+input,
+textarea {
+  outline-offset: 3px;
+}
+:focus-visible {
+  outline: 2px solid var(--focus);
+}
+h1,
+h2,
+h3,
+p {
+  margin: 0;
+}
+h1,
+h2,
+h3,
+strong {
+  font-weight: 600;
+}
+img,
+video {
+  max-width: 100%;
+  display: block;
+}
+fieldset {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+}
+.text-muted {
+  color: var(--muted);
+}
+.text-xs {
+  font-size: 12px;
+}
+.text-danger {
+  color: var(--danger);
+}
+.text-success {
+  color: var(--success);
+}
+.row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.eyebrow {
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  color: var(--muted);
+  font-weight: 500;
+}
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

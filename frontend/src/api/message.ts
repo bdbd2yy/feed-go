@@ -6,5 +6,9 @@ export function sendMessage(toId: number, content: string) {
 }
 
 export function listMessages(peerId: number) {
-  return postJson<ListMessagesResponse>('/message/list', { peer_id: peerId }, { authRequired: true })
+  return postJson<ListMessagesResponse>(
+    '/message/list',
+    { peer_id: peerId },
+    { authRequired: true },
+  )
 }

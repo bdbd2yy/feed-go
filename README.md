@@ -1,6 +1,12 @@
 # feedsystem_video_go
 
-基于 Go + Vue 3 的短视频 Feed 系统，含账号、视频、点赞、评论、关注、Feed 流、私信、通知，支持 Redis 缓存、RabbitMQ 异步 Worker、分片上传、SSE 实时推送、Docker Compose 部署。
+基于 Go + React 的短视频 Feed 系统，含账号、视频、点赞、评论、关注、Feed 流、私信、通知，支持 Redis 缓存、RabbitMQ 异步 Worker、分片上传、SSE 实时推送、Docker Compose 部署。
+
+## 前端技术栈
+
+前端位于 `frontend/`，使用 React 19、TypeScript、Vite 8、React Router 7 和 TanStack Query 5。基础组件基于 Base UI 交互能力自行封装，使用 Tailwind CSS 4、语义主题变量和 Phosphor Icons 统一界面，支持浅色/深色主题、桌面侧栏和移动端导航。
+
+推荐使用 Node.js 24；包管理器为 **npm**，依赖版本由 `frontend/package-lock.json` 锁定。页面路由、组件约定、认证和上传机制详见 [前端开发文档](frontend/README.md)，整体模块设计见 [项目设计](feedsystem_video_go项目设计.md)。
 
 ## 更完整的视频 Feed 流系统项目
 
@@ -27,6 +33,7 @@ docker compose up -d --build
 ```
 
 访问：
+
 - 前端：`http://localhost:5173`
 - 后端 API：`http://localhost:8080`
 - RabbitMQ 管理台：`http://localhost:15672`（`admin` / `password123`）
@@ -42,36 +49,61 @@ Docker Compose 会读取 `.env`，缺省使用 `feedsystem-dev-secret-key`。生
 `start.sh` 默认启动 RabbitMQ、Redis、后端 API、Worker 与前端。常用开关：
 
 ```bash
-START_FRONTEND=0 ./start.sh       # API + Worker
-START_WORKER=0 ./start.sh         # API + 前端
-STOP_DOCKER=1 ./start.sh          # 退出时停止脚本拉起的 compose 服务
-CONFIG_PATH=configs/config.yaml ./start.sh
+env START_FRONTEND=0 ./start.sh       # API + Worker
+env START_WORKER=0 ./start.sh         # API + 前端
+env STOP_DOCKER=1 ./start.sh          # 退出时停止脚本拉起的 compose 服务
+env CONFIG_PATH=configs/config.yaml ./start.sh
 ```
 
 ## 本地开发
 
-```bash
-# 启动依赖
+先从项目根目录启动依赖：
+
+```sh
 docker compose up -d mysql redis rabbitmq
-
-# 后端
-cd backend
-CONFIG_PATH=configs/config.compose-local.yaml go run ./cmd
-
-# Worker
-CONFIG_PATH=configs/config.compose-local.yaml go run ./cmd/worker
-
-# 前端
-cd frontend
-npm install && npm run dev
 ```
+
+分别在独立终端启动 API 和 Worker：
+
+```sh
+cd backend
+env CONFIG_PATH=configs/config.compose-local.yaml go run ./cmd
+```
+
+```sh
+cd backend
+env CONFIG_PATH=configs/config.compose-local.yaml go run ./cmd/worker
+```
+
+从项目根目录安装前端依赖并启动开发服务：
+
+```sh
+npm --prefix frontend ci
+npm --prefix frontend run dev
+```
+
+Vite 默认使用 `http://localhost:5173`。开发服务把 `/api` 请求去掉前缀后转发到后端，并将 `/static` 媒体请求代理到同一后端。运行 Docker 前端时也会占用 5173，可用独立端口联调：
+
+```sh
+npm --prefix frontend run dev -- --port 5188 --strictPort
+```
+
+前端提交前检查：
+
+```sh
+npm --prefix frontend run format:check
+npm --prefix frontend test
+npm --prefix frontend run build
+```
+
+构建产物位于 `frontend/dist/`。更新已运行的 Docker 前端时，在项目根目录执行 `docker compose up -d --build frontend`。
 
 ## CI
 
 GitHub Actions 配置位于 `.github/workflows/ci.yml`，在 Pull Request 以及推送到 `main`、`master` 时运行。
 
 - 后端：Go 1.24.x，执行 `go mod download`、`go vet ./...`、`go test -race -count=1 ./...`
-- 前端：Node.js 22，执行 `npm ci`、`npm run build`
+- 前端：工作流当前使用 Node.js 22，执行 `npm ci`、`npm run build`。Docker 构建使用 Node.js 24；`npm test` 和 `npm run format:check` 目前需在本地运行。
 
 ## 接口清单
 
