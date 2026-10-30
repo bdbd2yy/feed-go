@@ -1,5 +1,5 @@
 #
-# Multi-stage build for Vue (Vite) frontend, served by Nginx.
+# Multi-stage build for React (Vite) frontend, served by Nginx.
 #
 # Build:
 #   docker build -f frontend/Dockerfile -t feedsystem-frontend .

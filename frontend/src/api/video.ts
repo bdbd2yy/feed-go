@@ -2,7 +2,12 @@ import { postForm, postJson } from './client'
 import { normalizeVideoList } from './normalize'
 import type { Video } from './types'
 
-export function publishVideo(input: { title: string; description: string; play_url: string; cover_url: string }) {
+export function publishVideo(input: {
+  title: string
+  description: string
+  play_url: string
+  cover_url: string
+}) {
   return postJson<Video>('/video/publish', input, { authRequired: true })
 }
 
@@ -64,5 +69,9 @@ export function chunkStatus(uploadId: string) {
 }
 
 export function completeChunkUpload(uploadId: string) {
-  return postJson<UploadResponse>('/video/chunk/complete', { upload_id: uploadId }, { authRequired: true })
+  return postJson<UploadResponse>(
+    '/video/chunk/complete',
+    { upload_id: uploadId },
+    { authRequired: true },
+  )
 }

@@ -13,7 +13,12 @@ export type ListMessagesResponse = {
   messages: DirectMessage[]
 }
 
-export type TokenResponse = { token: string; refresh_token?: string; account_id?: number; username?: string }
+export type TokenResponse = {
+  token: string
+  refresh_token?: string
+  account_id?: number
+  username?: string
+}
 
 export type Account = {
   id: number

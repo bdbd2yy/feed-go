@@ -14,7 +14,11 @@ export function logout() {
 }
 
 export function rename(newUsername: string) {
-  return postJson<TokenResponse>('/account/rename', { new_username: newUsername }, { authRequired: true })
+  return postJson<TokenResponse>(
+    '/account/rename',
+    { new_username: newUsername },
+    { authRequired: true },
+  )
 }
 
 export function changePassword(username: string, oldPassword: string, newPassword: string) {
