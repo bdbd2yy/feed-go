@@ -8,40 +8,23 @@ import (
 	"time"
 
 	rediscache "feedsystem_video_go/internal/middleware/redis"
-	"feedsystem_video_go/internal/social"
 	"feedsystem_video_go/internal/video"
 )
 
-// followingAuthors 以当前数据库关注关系划分来源；不维护第二份 following:bigv 缓存。
-func (repo *FeedRepository) followingAuthors(ctx context.Context, viewer uint, threshold int64) (ordinary, big []uint, err error) {
-	type authorCount struct {
-		ID   uint
-		Fans int64
+// followingAuthors 在 service 层按业务阈值划分普通作者与大 V。
+func (f *FeedService) followingAuthors(ctx context.Context, viewer uint) (ordinary, big []uint, err error) {
+	authors, err := f.repo.ListFollowingAuthors(ctx, viewer)
+	if err != nil {
+		return nil, nil, err
 	}
-	var rows []authorCount
-	counts := repo.db.WithContext(ctx).Model(&social.Social{}).Select("vlogger_id, COUNT(*) AS fans").Group("vlogger_id")
-	err = repo.db.WithContext(ctx).Model(&social.Social{}).Select("socials.vlogger_id AS id, counts.fans").Joins("JOIN (?) AS counts ON counts.vlogger_id = socials.vlogger_id", counts).Where("socials.follower_id = ?", viewer).Order("socials.vlogger_id ASC").Scan(&rows).Error
-	for _, r := range rows {
-		if r.Fans >= threshold {
-			big = append(big, r.ID)
+	for _, author := range authors {
+		if author.FollowerCount >= f.bigVThreshold {
+			big = append(big, author.ID)
 		} else {
-			ordinary = append(ordinary, r.ID)
+			ordinary = append(ordinary, author.ID)
 		}
 	}
-	return
-}
-
-func (repo *FeedRepository) authorVideos(ctx context.Context, authors []uint, limit int, cursor *FollowingCursor) ([]*video.Video, error) {
-	if len(authors) == 0 {
-		return []*video.Video{}, nil
-	}
-	q := repo.db.WithContext(ctx).Where("author_id IN ?", authors).Order("create_time DESC, id DESC")
-	if cursor != nil {
-		q = q.Where("(create_time < ?) OR (create_time = ? AND id < ?)", cursor.Time, cursor.Time, cursor.ID)
-	}
-	var rows []*video.Video
-	err := q.Limit(limit).Find(&rows).Error
-	return rows, err
+	return ordinary, big, nil
 }
 
 // cachedFollowingSource 只接受有完整性标记、且覆盖足够候选的窗口。
@@ -124,7 +107,7 @@ func (f *FeedService) followingCandidates(ctx context.Context, viewer uint, n in
 	if f.rediscache == nil {
 		return f.repo.ListByFollowing(ctx, n, viewer, cursor)
 	}
-	ordinary, big, err := f.repo.followingAuthors(ctx, viewer, f.bigVThreshold)
+	ordinary, big, err := f.followingAuthors(ctx, viewer)
 	if err != nil {
 		return nil, err
 	}
@@ -137,7 +120,7 @@ func (f *FeedService) followingCandidates(ctx context.Context, viewer uint, n in
 		key := f.rediscache.Key("feed:inbox:%d", viewer)
 		rows, ok := f.cachedFollowingSource(ctx, key, ordinary, n, cursor)
 		if !ok {
-			rows, err = f.repo.authorVideos(ctx, ordinary, n, cursor)
+			rows, err = f.repo.ListByAuthors(ctx, ordinary, n, cursor)
 			if err != nil {
 				return nil, err
 			}
@@ -152,7 +135,7 @@ func (f *FeedService) followingCandidates(ctx context.Context, viewer uint, n in
 			cacheCtx, cancel := context.WithTimeout(ctx, 50*time.Millisecond)
 			token, owned, beginErr := f.rediscache.BeginInboxRebuild(cacheCtx, key, 2*time.Second)
 			cancel()
-			rows, err = f.repo.authorVideos(ctx, []uint{author}, n, cursor)
+			rows, err = f.repo.ListByAuthors(ctx, []uint{author}, n, cursor)
 			if err != nil {
 				return nil, err
 			}

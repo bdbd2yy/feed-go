@@ -21,7 +21,7 @@ func (f *FeedService) maybeRebuildInbox(viewer uint) {
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 	key := f.rediscache.Key("feed:inbox:%d", viewer)
-	ordinary, _, err := f.repo.followingAuthors(ctx, viewer, f.bigVThreshold)
+	ordinary, _, err := f.followingAuthors(ctx, viewer)
 	if err != nil {
 		return
 	}
@@ -58,11 +58,11 @@ func (f *FeedService) maybeRebuildInbox(viewer uint) {
 
 func (f *FeedService) rebuildInbox(ctx context.Context, viewer uint, key, token string) error {
 	// 从主库在登记重建后读取普通作者作品；每次只取最近 1000 条。
-	ordinary, _, err := f.repo.followingAuthors(ctx, viewer, f.bigVThreshold)
+	ordinary, _, err := f.followingAuthors(ctx, viewer)
 	if err != nil {
 		return err
 	}
-	videos, err := f.repo.ListOrdinaryFollowing(ctx, viewer, f.bigVThreshold, 1000)
+	videos, err := f.repo.ListVideoIndexesByAuthors(ctx, ordinary, 1000)
 	if err != nil {
 		return err
 	}

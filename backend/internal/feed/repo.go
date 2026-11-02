@@ -115,11 +115,37 @@ func (repo *FeedRepository) ListByTag(ctx context.Context, tagName string, limit
 	return videos, err
 }
 
-// ListOrdinaryFollowing 为收件箱重建读取普通关注作者的近期作品索引。
-func (repo *FeedRepository) ListOrdinaryFollowing(ctx context.Context, viewer uint, threshold int64, limit int) ([]video.Video, error) {
-	following := repo.db.WithContext(ctx).Model(&social.Social{}).Select("vlogger_id").Where("follower_id = ?", viewer)
-	bigAuthors := repo.db.WithContext(ctx).Model(&social.Social{}).Select("vlogger_id").Group("vlogger_id").Having("COUNT(*) >= ?", threshold)
+// ListVideoIndexesByAuthors 为重建读取指定作者的近期索引；作者分类由 service 决定。
+func (repo *FeedRepository) ListVideoIndexesByAuthors(ctx context.Context, authors []uint, limit int) ([]video.Video, error) {
+	if len(authors) == 0 {
+		return []video.Video{}, nil
+	}
 	var videos []video.Video
-	err := repo.db.WithContext(ctx).Select("id", "create_time").Where("author_id IN (?)", following).Where("author_id NOT IN (?)", bigAuthors).Order("create_time DESC, id DESC").Limit(limit).Find(&videos).Error
+	err := repo.db.WithContext(ctx).Select("id", "create_time").Where("author_id IN ?", authors).Order("create_time DESC, id DESC").Limit(limit).Find(&videos).Error
+	return videos, err
+}
+
+// ListFollowingAuthors 只查询关注作者及粉丝数，不在仓储层决定大 V 分类。
+func (repo *FeedRepository) ListFollowingAuthors(ctx context.Context, viewer uint) ([]FollowingAuthor, error) {
+	counts := repo.db.WithContext(ctx).Model(&social.Social{}).Select("vlogger_id, COUNT(*) AS follower_count").Group("vlogger_id")
+	var authors []FollowingAuthor
+	err := repo.db.WithContext(ctx).Model(&social.Social{}).
+		Select("socials.vlogger_id AS id, counts.follower_count").
+		Joins("JOIN (?) AS counts ON counts.vlogger_id = socials.vlogger_id", counts).
+		Where("socials.follower_id = ?", viewer).Order("socials.vlogger_id ASC").Scan(&authors).Error
+	return authors, err
+}
+
+// ListByAuthors 按作者集合与复合游标读取视频；调用方决定集合和候选数量。
+func (repo *FeedRepository) ListByAuthors(ctx context.Context, authors []uint, limit int, cursor *FollowingCursor) ([]*video.Video, error) {
+	if len(authors) == 0 {
+		return []*video.Video{}, nil
+	}
+	query := repo.db.WithContext(ctx).Where("author_id IN ?", authors).Order("create_time DESC, id DESC")
+	if cursor != nil {
+		query = query.Where("(create_time < ?) OR (create_time = ? AND id < ?)", cursor.Time, cursor.Time, cursor.ID)
+	}
+	var videos []*video.Video
+	err := query.Limit(limit).Find(&videos).Error
 	return videos, err
 }

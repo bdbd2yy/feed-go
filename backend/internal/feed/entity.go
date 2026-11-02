@@ -98,3 +98,9 @@ type ListByPopularityResponse struct {
 	NextLatestBefore     *time.Time `json:"next_latest_before,omitempty"`     // 下一页数据库游标的创建时间，传回 latest_before
 	NextLatestIDBefore   *uint      `json:"next_latest_id_before,omitempty"`  // 下一页数据库游标的视频 ID，传回 latest_id_before
 }
+
+// FollowingAuthor 当前关注作者及其粉丝数，由仓储查询、由 service 决定分发分类。
+type FollowingAuthor struct {
+	ID            uint  `gorm:"column:id"`
+	FollowerCount int64 `gorm:"column:follower_count"`
+}
