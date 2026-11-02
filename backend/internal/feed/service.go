@@ -353,7 +353,7 @@ func (f *FeedService) ListLikesCount(ctx context.Context, limit int, cursor *Lik
 	return resp, nil
 }
 
-// ListByFollowing 以 MySQL 作为关注流正确性基准，不缓存整页的关注关系和点赞状态。
+// ListByFollowing 归并普通作者 inbox 与大 V 作品列表；来源不完整时回源 MySQL。
 func (f *FeedService) ListByFollowing(ctx context.Context, limit int, cursor *FollowingCursor, viewerAccountID uint) (ListByFollowingResponse, error) {
 	if viewerAccountID == 0 {
 		return ListByFollowingResponse{}, fmt.Errorf("following feed requires an authenticated viewer")
@@ -371,7 +371,7 @@ func (f *FeedService) ListByFollowing(ctx context.Context, limit int, cursor *Fo
 	ctx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
 	defer cancel()
 	// 多查一条只用于判断下一页；游标必须取实际返回的最后一条。
-	videos, err := f.repo.ListByFollowing(ctx, limit+1, viewerAccountID, cursor)
+	videos, err := f.followingCandidates(ctx, viewerAccountID, limit+1, cursor)
 	if err != nil {
 		return ListByFollowingResponse{}, err
 	}

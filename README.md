@@ -176,7 +176,7 @@ GitHub Actions 配置位于 `.github/workflows/ci.yml`，在 Pull Request 以及
 
 排序为 `create_time DESC, id DESC`，只返回当前关注作者的作品。时间字符串保留数据库精度，前端不要转换、截断或从视频展示用的 `create_time` 生成游标。服务端多查一条判断 `has_more`；结束时 `has_more=false`、`next_cursor=null`。旧关注流协议的 `latest_time` 已停用，传入会返回 400；部署时须同步更新前后端。
 
-本阶段关注流直接查询 MySQL，移除了会导致新发布内容滞留的整页结果缓存；Redis 收件箱与推拉归并将在后续阶段加入。复合游标保证排序边界，不提供跨页快照；刷新首页才能获取游标之前的新内容，关注变化按每次请求时的关系生效。学习说明见 [关注流分页](docs/following-feed-pagination.md)。
+关注流已接入普通作者 inbox 与大 V 作者作品列表的堆归并，来源缺失、作者集合不匹配或缓存候选不足时查询 MySQL；不会缓存整页的点赞状态。重建与关注变更并发的版本隔离暂未实现。复合游标保证排序边界，不提供跨页快照；刷新首页才能获取游标之前的新内容，关注变化按每次请求时的关系生效。学习说明见 [关注流分页](docs/following-feed-pagination.md)。
 
 ### 通知 `/notification`
 | 方法 | 路径 | 鉴权 | 说明 |

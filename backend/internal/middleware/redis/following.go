@@ -16,7 +16,7 @@ func FollowingMember(at time.Time, id uint) string {
 }
 
 var appendFollowingScript = goredis.NewScript(`
-if ARGV[4] == '1' then
+do
  if redis.call('EXISTS', KEYS[2]) == 1 then
   redis.call('ZADD', KEYS[3], 0, ARGV[1])
   redis.call('ZREMRANGEBYRANK', KEYS[3], 0, -tonumber(ARGV[2])-1)

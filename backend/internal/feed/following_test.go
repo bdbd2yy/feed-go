@@ -245,3 +245,91 @@ func TestFollowingRequestTriggersOrdinaryInboxRebuild(t *testing.T) {
 		time.Sleep(time.Millisecond)
 	}
 }
+
+func TestHybridFollowingMatchesDatabase(t *testing.T) {
+	db := openFollowingTestDB(t)
+	mr := miniredis.RunT(t)
+	raw := goredis.NewClient(&goredis.Options{Addr: mr.Addr()})
+	defer raw.Close()
+	cache := rediscache.NewClient(raw, "test:")
+	at := time.Date(2026, 1, 1, 0, 0, 0, 123456000, time.UTC)
+	var records []video.Video
+	for i := uint(1); i <= 12; i++ {
+		records = append(records, video.Video{ID: i, AuthorID: 1 + i%2, CreateTime: at.Add(time.Duration(i/2) * time.Microsecond)})
+	}
+	if err := db.Create(&records).Error; err != nil {
+		t.Fatal(err)
+	}
+	relations := []social.Social{{FollowerID: 7, VloggerID: 1}, {FollowerID: 7, VloggerID: 2}, {FollowerID: 8, VloggerID: 2}}
+	if err := db.Create(&relations).Error; err != nil {
+		t.Fatal(err)
+	}
+	svc := NewFeedService(NewFeedRepository(db), video.NewLikeRepository(db), cache, 2)
+	key := cache.Key("feed:inbox:%d", 7)
+	token, ok, err := cache.BeginInboxRebuild(context.Background(), key, time.Second)
+	if err != nil || !ok {
+		t.Fatal(err)
+	}
+	if err := svc.rebuildInbox(context.Background(), 7, key, token); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := svc.cachedFollowingSource(context.Background(), key, []uint{1}, 3, nil); !ok {
+		t.Fatal("ordinary source was not cache-readable")
+	}
+	// 第一次从作者数据库建立窗口，第二次实际读取作者 Redis 窗口。
+	for pass := 0; pass < 2; pass++ {
+		var cursor *FollowingCursor
+		var got []uint
+		for page := 0; page < 10; page++ {
+			rows, err := svc.followingCandidates(context.Background(), 7, 3, cursor)
+			if err != nil {
+				t.Fatal(err)
+			}
+			more := len(rows) > 2
+			if more {
+				rows = rows[:2]
+			}
+			for _, v := range rows {
+				got = append(got, v.ID)
+			}
+			if !more {
+				break
+			}
+			last := rows[len(rows)-1]
+			cursor = &FollowingCursor{Time: last.CreateTime, ID: last.ID}
+		}
+		want, err := svc.repo.ListByFollowing(context.Background(), 20, 7, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids := []uint{}
+		for _, v := range want {
+			ids = append(ids, v.ID)
+		}
+		if !reflect.DeepEqual(got, ids) {
+			t.Fatalf("hybrid=%v database=%v", got, ids)
+		}
+	}
+	if _, ok := svc.cachedFollowingSource(context.Background(), cache.Key("feed:user_videos:%d", 2), []uint{2}, 3, nil); !ok {
+		t.Fatal("big V outbox not cache-readable")
+	}
+	// 关系变化后 scope 不匹配，必须回源，不能返回旧作者的缓存。
+	if err := db.Where("follower_id = ? AND vlogger_id = ?", 7, 1).Delete(&social.Social{}).Error; err != nil {
+		t.Fatal(err)
+	}
+	rows, err := svc.followingCandidates(context.Background(), 7, 3, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, v := range rows {
+		if v.AuthorID != 2 {
+			t.Fatal("unfollowed author returned")
+		}
+	}
+	// Redis 故障时仍可按路回源，不返回空结果。
+	mr.Close()
+	rows, err = svc.followingCandidates(context.Background(), 7, 3, nil)
+	if err != nil || len(rows) != 3 {
+		t.Fatalf("redis fallback rows=%d err=%v", len(rows), err)
+	}
+}

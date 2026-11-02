@@ -3,6 +3,7 @@ package feed
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"time"
 
@@ -12,7 +13,7 @@ import (
 var ErrFollowingBusy = errors.New("following feed database concurrency limit reached")
 
 // 不让冷缓存为每个请求创建一个排队 goroutine；后台重建也有独立并发上限。
-// 当前缓存仍不用于接口读取，ready 只表示本次重建已发布，不能替代关系版本校验。
+// 当前作者集合 scope 用于基本失效判断；不提供并发关注变更的版本隔离。
 func (f *FeedService) maybeRebuildInbox(viewer uint) {
 	if f.rediscache == nil {
 		return
@@ -20,7 +21,15 @@ func (f *FeedService) maybeRebuildInbox(viewer uint) {
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 	key := f.rediscache.Key("feed:inbox:%d", viewer)
+	ordinary, _, err := f.repo.followingAuthors(ctx, viewer, f.bigVThreshold)
+	if err != nil {
+		return
+	}
+	scope, _ := f.rediscache.GetBytes(ctx, key+":scope")
 	ready, err := f.rediscache.TouchInbox(ctx, key, 7*24*time.Hour)
+	if string(scope) != fmt.Sprint(ordinary) {
+		ready = false
+	}
 	if err != nil || ready {
 		return
 	}
@@ -49,6 +58,10 @@ func (f *FeedService) maybeRebuildInbox(viewer uint) {
 
 func (f *FeedService) rebuildInbox(ctx context.Context, viewer uint, key, token string) error {
 	// 从主库在登记重建后读取普通作者作品；每次只取最近 1000 条。
+	ordinary, _, err := f.repo.followingAuthors(ctx, viewer, f.bigVThreshold)
+	if err != nil {
+		return err
+	}
 	videos, err := f.repo.ListOrdinaryFollowing(ctx, viewer, f.bigVThreshold, 1000)
 	if err != nil {
 		return err
@@ -64,5 +77,5 @@ func (f *FeedService) rebuildInbox(ctx context.Context, viewer uint, key, token 
 	if !ok {
 		return errors.New("inbox rebuild lease expired or superseded")
 	}
-	return nil
+	return f.rediscache.SetBytes(ctx, key+":scope", []byte(fmt.Sprint(ordinary)), 7*24*time.Hour)
 }
