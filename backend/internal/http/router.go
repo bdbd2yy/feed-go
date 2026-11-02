@@ -169,7 +169,7 @@ func SetRouter(db *gorm.DB, cache *rediscache.Client, rmq *rabbitmq.RabbitMQ, fe
 	})
 	// feed
 	feedRepository := feed.NewFeedRepository(db)
-	feedService := feed.NewFeedService(feedRepository, likeRepository, cache)
+	feedService := feed.NewFeedService(feedRepository, likeRepository, cache, feedConfig.BigVThreshold)
 	feedHandler := feed.NewFeedHandler(feedService)
 	feedGroup := r.Group("/feed")
 	feedGroup.Use(jwt.SoftJWTAuth(accountRepository, cache))

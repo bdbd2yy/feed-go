@@ -12,10 +12,13 @@ import (
 	"testing"
 	"time"
 
+	rediscache "feedsystem_video_go/internal/middleware/redis"
 	"feedsystem_video_go/internal/social"
 	"feedsystem_video_go/internal/video"
+	"github.com/alicebob/miniredis/v2"
 	"github.com/gin-gonic/gin"
 	mysqldrv "github.com/go-sql-driver/mysql"
+	goredis "github.com/redis/go-redis/v9"
 	gomysql "gorm.io/driver/mysql"
 	"gorm.io/gorm"
 )
@@ -185,5 +188,60 @@ func TestFollowingPaginationMySQL(t *testing.T) {
 	resp, err = svc.ListByFollowing(context.Background(), 1, nil, 7)
 	if err != nil || len(resp.VideoList) != 1 || resp.VideoList[0].ID != 500 {
 		t.Fatalf("refresh must see newly published video: %+v, %v", resp, err)
+	}
+}
+
+func TestFollowingBusyReturnsRetryableResponse(t *testing.T) {
+	svc := NewFeedService(nil, nil, nil)
+	for i := 0; i < cap(svc.followingReads); i++ {
+		svc.followingReads <- struct{}{}
+	}
+	w := followingRequest(t, NewFeedHandler(svc), `{"limit":2}`, true)
+	if w.Code != 503 || w.Header().Get("Retry-After") == "" {
+		t.Fatalf("busy response: %d %s", w.Code, w.Body.String())
+	}
+}
+
+func TestFollowingRequestTriggersOrdinaryInboxRebuild(t *testing.T) {
+	db := openFollowingTestDB(t)
+	mr := miniredis.RunT(t)
+	raw := goredis.NewClient(&goredis.Options{Addr: mr.Addr()})
+	defer raw.Close()
+	cache := rediscache.NewClient(raw, "test:")
+	at := time.Date(2026, 1, 1, 0, 0, 0, 123456000, time.UTC)
+	records := []video.Video{{ID: 1, AuthorID: 1, CreateTime: at}, {ID: 2, AuthorID: 2, CreateTime: at}}
+	if err := db.Create(&records).Error; err != nil {
+		t.Fatal(err)
+	}
+	relations := []social.Social{{FollowerID: 7, VloggerID: 1}, {FollowerID: 7, VloggerID: 2}, {FollowerID: 8, VloggerID: 2}}
+	if err := db.Create(&relations).Error; err != nil {
+		t.Fatal(err)
+	}
+	svc := NewFeedService(NewFeedRepository(db), video.NewLikeRepository(db), cache, 2)
+	resp, err := svc.ListByFollowing(context.Background(), 10, nil, 7)
+	if err != nil || len(resp.VideoList) != 2 {
+		t.Fatalf("DB response: %+v %v", resp, err)
+	}
+	key := cache.Key("feed:inbox:%d", 7)
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		if ready, _ := cache.TouchInbox(context.Background(), key, time.Hour); ready {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("request did not complete background rebuild")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	got, err := raw.ZRevRange(context.Background(), key, 0, -1).Result()
+	if err != nil || !reflect.DeepEqual(got, []string{rediscache.FollowingMember(at, 1)}) {
+		t.Fatalf("ordinary inbox=%v err=%v", got, err)
+	}
+	// 等待后台清理完成，避免测试结束时关闭 Redis/数据库与任务交错。
+	for len(svc.followingBuilds) > 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("background task did not exit")
+		}
+		time.Sleep(time.Millisecond)
 	}
 }

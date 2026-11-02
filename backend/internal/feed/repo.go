@@ -114,3 +114,12 @@ func (repo *FeedRepository) ListByTag(ctx context.Context, tagName string, limit
 		Find(&videos).Error
 	return videos, err
 }
+
+// ListOrdinaryFollowing 为收件箱重建读取普通关注作者的近期作品索引。
+func (repo *FeedRepository) ListOrdinaryFollowing(ctx context.Context, viewer uint, threshold int64, limit int) ([]video.Video, error) {
+	following := repo.db.WithContext(ctx).Model(&social.Social{}).Select("vlogger_id").Where("follower_id = ?", viewer)
+	bigAuthors := repo.db.WithContext(ctx).Model(&social.Social{}).Select("vlogger_id").Group("vlogger_id").Having("COUNT(*) >= ?", threshold)
+	var videos []video.Video
+	err := repo.db.WithContext(ctx).Select("id", "create_time").Where("author_id IN (?)", following).Where("author_id NOT IN (?)", bigAuthors).Order("create_time DESC, id DESC").Limit(limit).Find(&videos).Error
+	return videos, err
+}

@@ -1,6 +1,8 @@
 package feed
 
 import (
+	"context"
+	"errors"
 	"feedsystem_video_go/internal/apierror"
 	"feedsystem_video_go/internal/middleware/jwt"
 	"time"
@@ -115,6 +117,11 @@ func (f *FeedHandler) ListByFollowing(c *gin.Context) {
 	}
 	feedItems, err := f.service.ListByFollowing(c.Request.Context(), req.Limit, req.Cursor, viewerAccountID)
 	if err != nil {
+		if errors.Is(err, ErrFollowingBusy) || errors.Is(err, context.DeadlineExceeded) {
+			c.Header("Retry-After", "1")
+			c.JSON(503, gin.H{"error": "following feed is busy; retry later"})
+			return
+		}
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
 	}

@@ -3,6 +3,7 @@ package feed
 import (
 	"context"
 	"encoding/json"
+	"feedsystem_video_go/internal/config"
 	rediscache "feedsystem_video_go/internal/middleware/redis"
 	"feedsystem_video_go/internal/video"
 	"fmt"
@@ -17,12 +18,15 @@ import (
 )
 
 type FeedService struct {
-	repo         *FeedRepository
-	likeRepo     *video.LikeRepository
-	rediscache   *rediscache.Client
-	localcache   *cache.Cache
-	cacheTTL     time.Duration
-	requestGroup singleflight.Group
+	repo            *FeedRepository
+	likeRepo        *video.LikeRepository
+	rediscache      *rediscache.Client
+	localcache      *cache.Cache
+	cacheTTL        time.Duration
+	requestGroup    singleflight.Group
+	followingReads  chan struct{}
+	followingBuilds chan struct{}
+	bigVThreshold   int64
 }
 
 // CachedFeedData 是公共视频数据的缓存载体，不包含查看者专属点赞状态；当前 service 未使用此结构。
@@ -30,8 +34,12 @@ type CachedFeedData struct {
 	PublicVideos []video.Video `json:"public_videos"` // 可跨查看者复用的视频实体列表
 }
 
-func NewFeedService(repo *FeedRepository, likeRepo *video.LikeRepository, rediscache *rediscache.Client) *FeedService {
-	return &FeedService{repo: repo, likeRepo: likeRepo, rediscache: rediscache, localcache: cache.New(3*time.Second, 5*time.Second), cacheTTL: 24 * time.Hour}
+func NewFeedService(repo *FeedRepository, likeRepo *video.LikeRepository, rediscache *rediscache.Client, thresholds ...int64) *FeedService {
+	threshold := config.DefaultBigVThreshold
+	if len(thresholds) > 0 && thresholds[0] > 0 {
+		threshold = thresholds[0]
+	}
+	return &FeedService{followingReads: make(chan struct{}, 32), followingBuilds: make(chan struct{}, 2), bigVThreshold: threshold, repo: repo, likeRepo: likeRepo, rediscache: rediscache, localcache: cache.New(3*time.Second, 5*time.Second), cacheTTL: 24 * time.Hour}
 }
 
 // GetVideoByIDs 按输入 ID 顺序取视频；采用本地缓存、Redis、MySQL 三级读取。
@@ -353,6 +361,15 @@ func (f *FeedService) ListByFollowing(ctx context.Context, limit int, cursor *Fo
 	if limit <= 0 || limit > 50 {
 		limit = 10
 	}
+	// 每实例最多 32 个关注流回源，不无限排队；整个查询与点赞补充共用超时。
+	select {
+	case f.followingReads <- struct{}{}:
+		defer func() { <-f.followingReads }()
+	default:
+		return ListByFollowingResponse{}, ErrFollowingBusy
+	}
+	ctx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
+	defer cancel()
 	// 多查一条只用于判断下一页；游标必须取实际返回的最后一条。
 	videos, err := f.repo.ListByFollowing(ctx, limit+1, viewerAccountID, cursor)
 	if err != nil {
@@ -371,6 +388,7 @@ func (f *FeedService) ListByFollowing(ctx context.Context, limit int, cursor *Fo
 		last := videos[len(videos)-1]
 		resp.NextCursor = &FollowingCursor{Time: last.CreateTime, ID: last.ID}
 	}
+	f.maybeRebuildInbox(viewerAccountID)
 	return resp, nil
 }
 
