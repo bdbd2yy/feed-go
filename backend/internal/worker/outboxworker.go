@@ -46,7 +46,7 @@ func StartOutboxPoller(db *gorm.DB, tmq *rabbitmq.TimelineMQ) {
 	}()
 }
 
-func StartConsumer(tmq *rabbitmq.TimelineMQ, queueName string, redisClient *rediscache.Client, rmq *rabbitmq.RabbitMQ) {
+func StartConsumer(tmq *rabbitmq.TimelineMQ, queueName string, redisClient *rediscache.Client, rmq *rabbitmq.RabbitMQ, fanout *FanoutWorker) {
 	if tmq == nil || rmq == nil || rmq.Conn == nil {
 		log.Printf("Timeline consumer disabled: rabbitmq is not initialized")
 		return
@@ -88,7 +88,13 @@ func StartConsumer(tmq *rabbitmq.TimelineMQ, queueName string, redisClient *redi
 					continue
 				}
 
-				ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+				if event.VideoID == 0 {
+					log.Printf("Timeline consumer: discard event with zero video ID")
+					msg.Ack(false)
+					continue
+				}
+
+				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 				timelineKey := redisClient.Key("feed:global_timeline")
 				err = redisClient.ZAdd(ctx, timelineKey, oredis.Z{
 					Score:  float64(event.CreateTime),
@@ -106,6 +112,14 @@ func StartConsumer(tmq *rabbitmq.TimelineMQ, queueName string, redisClient *redi
 					log.Printf("Timeline consumer: ZRem失败: %v", err)
 				}
 
+				if fanout != nil {
+					if err := fanout.ProcessVideo(ctx, event.VideoID); err != nil {
+						log.Printf("Timeline consumer: fanout failed: video=%d err=%v", event.VideoID, err)
+						msg.Nack(false, true)
+						cancel()
+						continue
+					}
+				}
 				msg.Ack(false)
 				cancel()
 			}

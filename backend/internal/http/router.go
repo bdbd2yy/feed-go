@@ -3,6 +3,7 @@ package http
 import (
 	"context"
 	"feedsystem_video_go/internal/account"
+	"feedsystem_video_go/internal/config"
 	"feedsystem_video_go/internal/feed"
 	"feedsystem_video_go/internal/message"
 	"feedsystem_video_go/internal/middleware/jwt"
@@ -19,7 +20,7 @@ import (
 	"gorm.io/gorm"
 )
 
-func SetRouter(db *gorm.DB, cache *rediscache.Client, rmq *rabbitmq.RabbitMQ) *gin.Engine {
+func SetRouter(db *gorm.DB, cache *rediscache.Client, rmq *rabbitmq.RabbitMQ, feedConfig config.FeedConfig) *gin.Engine {
 	r := gin.Default()
 	if err := r.SetTrustedProxies(nil); err != nil {
 		log.Printf("SetTrustedProxies failed: %v", err)
@@ -201,7 +202,7 @@ func SetRouter(db *gorm.DB, cache *rediscache.Client, rmq *rabbitmq.RabbitMQ) *g
 		timelineMQ = nil
 	}
 	worker.StartOutboxPoller(db, timelineMQ)
-	worker.StartConsumer(timelineMQ, "video.timeline.update.queue", cache, rmq)
+	worker.StartConsumer(timelineMQ, "video.timeline.update.queue", cache, rmq, worker.NewFanoutWorker(db, cache, feedConfig.BigVThreshold))
 
 	// SSE notification
 	if rmq != nil {

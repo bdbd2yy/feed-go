@@ -62,6 +62,7 @@ services:
     environment:
       CONFIG_PATH: /app/configs/config.yaml
       JWT_SECRET: ${JWT_SECRET:-feedsystem-dev-secret-key}
+      FEED_BIG_V_THRESHOLD: ${FEED_BIG_V_THRESHOLD:-10000}
       MYSQL_DATABASE: ${MYSQL_DATABASE:-feedsystem}
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-123456}
       REDIS_PASSWORD: ${REDIS_PASSWORD:-123456}

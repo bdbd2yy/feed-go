@@ -3,13 +3,21 @@ package config
 import (
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"strconv"
 
 	"gopkg.in/yaml.v3"
 )
 
+const DefaultBigVThreshold int64 = 10000
+
+type FeedConfig struct {
+	BigVThreshold int64 `yaml:"big_v_threshold"`
+}
+
 type Config struct {
+	Feed                FeedConfig          `yaml:"feed"`
 	Server              ServerConfig        `yaml:"server"`
 	Database            DatabaseConfig      `yaml:"database"`
 	Redis               RedisConfig         `yaml:"redis"`
@@ -70,6 +78,17 @@ func Load(filename string) (Config, error) {
 func ApplyEnvOverrides(cfg *Config) {
 	if cfg == nil {
 		return
+	}
+	if cfg.Feed.BigVThreshold <= 0 {
+		cfg.Feed.BigVThreshold = DefaultBigVThreshold
+	}
+	if v := os.Getenv("FEED_BIG_V_THRESHOLD"); v != "" {
+		threshold, err := strconv.ParseInt(v, 10, 64)
+		if err != nil || threshold <= 0 {
+			log.Printf("invalid FEED_BIG_V_THRESHOLD, keeping configured value %d", cfg.Feed.BigVThreshold)
+		} else {
+			cfg.Feed.BigVThreshold = threshold
+		}
 	}
 	if v := os.Getenv("SERVER_PORT"); v != "" {
 		if port, err := strconv.Atoi(v); err == nil {
