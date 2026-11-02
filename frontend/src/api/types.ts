@@ -88,9 +88,14 @@ export type ListByPopularityResponse = {
   next_latest_id_before?: number
 }
 
+export type FollowingCursor = {
+  time: string
+  id: number
+}
+
 export type ListByFollowingResponse = {
   video_list: FeedVideoItem[]
-  next_time: number
+  next_cursor: FollowingCursor | null
   has_more: boolean
 }
 

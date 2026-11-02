@@ -49,20 +49,21 @@ func (repo *FeedRepository) ListLikesCountWithCursor(ctx context.Context, limit 
 	return videos, nil
 }
 
-func (repo *FeedRepository) ListByFollowing(ctx context.Context, limit int, viewerAccountID uint, latestBefore time.Time) ([]*video.Video, error) {
-	var videos []*video.Video
+func (repo *FeedRepository) ListByFollowing(ctx context.Context, limit int, viewerAccountID uint, cursor *FollowingCursor) ([]*video.Video, error) {
+	followingSubQuery := repo.db.WithContext(ctx).
+		Model(&social.Social{}).
+		Select("vlogger_id").
+		Where("follower_id = ?", viewerAccountID)
 	query := repo.db.WithContext(ctx).Model(&video.Video{}).
-		Order("create_time DESC")
-	if viewerAccountID > 0 {
-		followingSubQuery := repo.db.WithContext(ctx).
-			Model(&social.Social{}).
-			Select("vlogger_id").
-			Where("follower_id = ?", viewerAccountID)
-		query = query.Where("author_id IN (?)", followingSubQuery)
+		Where("author_id IN (?)", followingSubQuery).
+		Order("create_time DESC, id DESC")
+	if cursor != nil {
+		query = query.Where(
+			"(create_time < ?) OR (create_time = ? AND id < ?)",
+			cursor.Time, cursor.Time, cursor.ID,
+		)
 	}
-	if !latestBefore.IsZero() {
-		query = query.Where("create_time < ?", latestBefore)
-	}
+	var videos []*video.Video
 	if err := query.Limit(limit).Find(&videos).Error; err != nil {
 		return nil, err
 	}

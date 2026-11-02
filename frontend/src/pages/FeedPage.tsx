@@ -17,8 +17,15 @@ import { Badge, Button, EmptyState, QueryState, Tabs } from '../components/ui'
 import { VideoCard } from '../components/VideoCard'
 import { VideoActions } from '../components/VideoPlayer'
 import { usePlayerControls, type MuteState } from '../hooks/usePlayerControls'
-import type { FeedVideoItem } from '../api/types'
-type Cursor = { time: number; likes?: number; id?: number; asOf: number; offset: number }
+import type { FeedVideoItem, FollowingCursor } from '../api/types'
+type Cursor = {
+  time: number
+  likes?: number
+  id?: number
+  asOf: number
+  offset: number
+  following?: FollowingCursor | null
+}
 export default function FeedPage({ popular = false }: { popular?: boolean }) {
   const auth = useAuth()
   const [params] = useSearchParams()
@@ -53,10 +60,15 @@ export default function FeedPage({ popular = false }: { popular?: boolean }) {
           cursor: { ...c, likes: r.next_likes_count_before, id: r.next_id_before },
         }
       }
-      const r = await (tab === 'following' ? api.listByFollowing : api.listLatest)({
-        limit: 12,
-        latest_time: c.time,
-      })
+      if (tab === 'following') {
+        const r = await api.listByFollowing({ limit: 12, cursor: c.following })
+        return {
+          items: r.video_list,
+          more: r.has_more,
+          cursor: { ...c, following: r.next_cursor },
+        }
+      }
+      const r = await api.listLatest({ limit: 12, latest_time: c.time })
       return { items: r.video_list, more: r.has_more, cursor: { ...c, time: r.next_time } }
     },
     getNextPageParam: (last) => (last.more ? last.cursor : undefined),

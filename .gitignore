@@ -3,6 +3,10 @@ backend/.run/
 data/
 .sisyphus/
 docs/*
+!docs/following-feed-pagination.md
+!docs/adr/
+docs/adr/*
+!docs/adr/0001-hybrid-following-feed.md
 !docs/agents/
 !docs/agents/**
 

@@ -55,15 +55,24 @@ type ListLikesCountResponse struct {
 	HasMore              bool            `json:"has_more"`                          // 本页是否取满 limit，仅表示可能还有下一页
 }
 
+// FollowingCursor 是整个关注流的排序边界，与作者和存储来源无关。
+// 时间保留数据库返回的完整精度；客户端须原样传回，不能从展示用的秒级 create_time 推导。
+type FollowingCursor struct {
+	Time time.Time `json:"time"`
+	ID   uint      `json:"id"`
+}
+
 type ListByFollowingRequest struct {
-	Limit      int   `json:"limit"`
-	LatestTime int64 `json:"latest_time"`
+	Limit  int              `json:"limit"`
+	Cursor *FollowingCursor `json:"cursor"` // 首次省略或 null，续页原样传回 next_cursor
+	// 只用于拒绝旧协议续页，避免旧客户端被静默当作第一页。
+	LatestTime *int64 `json:"latest_time,omitempty"`
 }
 
 type ListByFollowingResponse struct {
-	VideoList []FeedVideoItem `json:"video_list"`
-	NextTime  int64           `json:"next_time"`
-	HasMore   bool            `json:"has_more"`
+	VideoList  []FeedVideoItem  `json:"video_list"`
+	NextCursor *FollowingCursor `json:"next_cursor"` // 没有下一页时为 null
+	HasMore    bool             `json:"has_more"`
 }
 
 // ListByPopularityRequest 热榜请求：优先使用 as_of/offset 读取 Redis 快照，失败时使用数据库复合游标。

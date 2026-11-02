@@ -94,21 +94,26 @@ func (f *FeedHandler) ListLikesCount(c *gin.Context) {
 func (f *FeedHandler) ListByFollowing(c *gin.Context) {
 	var req ListByFollowingRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(apierror.ClassifyHTTPStatus(err), gin.H{"error": err.Error()})
+		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}
 	if req.Limit <= 0 || req.Limit > 50 {
 		req.Limit = 10
 	}
+	if req.LatestTime != nil {
+		c.JSON(400, gin.H{"error": "latest_time is no longer supported; use cursor from next_cursor"})
+		return
+	}
+	if req.Cursor != nil && (req.Cursor.Time.IsZero() || req.Cursor.ID == 0) {
+		c.JSON(400, gin.H{"error": "cursor requires a nonzero time and id > 0"})
+		return
+	}
 	viewerAccountID, err := jwt.GetAccountID(c)
-	if err != nil {
-		viewerAccountID = 0
+	if err != nil || viewerAccountID == 0 {
+		c.JSON(401, gin.H{"error": "authentication required"})
+		return
 	}
-	var latestTime time.Time
-	if req.LatestTime > 0 {
-		latestTime = time.Unix(req.LatestTime, 0)
-	}
-	feedItems, err := f.service.ListByFollowing(c.Request.Context(), req.Limit, latestTime, viewerAccountID)
+	feedItems, err := f.service.ListByFollowing(c.Request.Context(), req.Limit, req.Cursor, viewerAccountID)
 	if err != nil {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return

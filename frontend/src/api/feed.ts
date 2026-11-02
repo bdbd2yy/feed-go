@@ -1,6 +1,7 @@
 import { postJson } from './client'
 import { normalizeFeedVideoList } from './normalize'
 import type {
+  FollowingCursor,
   ListByFollowingResponse,
   ListByPopularityResponse,
   ListLatestResponse,
@@ -31,7 +32,7 @@ export async function listByPopularity(input: { limit: number; as_of: number; of
   return { ...res, video_list: normalizeFeedVideoList(res.video_list) }
 }
 
-export async function listByFollowing(input: { limit: number; latest_time: number }) {
+export async function listByFollowing(input: { limit: number; cursor?: FollowingCursor | null }) {
   const res = await postJson<ListByFollowingResponse>('/feed/listByFollowing', input, {
     authRequired: true,
   })

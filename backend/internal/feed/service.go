@@ -345,92 +345,31 @@ func (f *FeedService) ListLikesCount(ctx context.Context, limit int, cursor *Lik
 	return resp, nil
 }
 
-// 按照关注列表查询视频
-func (f *FeedService) ListByFollowing(ctx context.Context, limit int, latestBefore time.Time, viewerAccountID uint) (ListByFollowingResponse, error) {
-	doListByFollowingFromDB := func() (ListByFollowingResponse, error) {
-		videos, err := f.repo.ListByFollowing(ctx, limit, viewerAccountID, latestBefore)
-		if err != nil {
-			return ListByFollowingResponse{}, err
-		}
-		var nextTime int64
-		if len(videos) > 0 {
-			nextTime = videos[len(videos)-1].CreateTime.Unix()
-		} else {
-			nextTime = 0
-		}
-		hasMore := len(videos) == limit
-		feedVideos, err := f.buildFeedVideos(ctx, videos, viewerAccountID)
-		if err != nil {
-			return ListByFollowingResponse{}, err
-		}
-		resp := ListByFollowingResponse{
-			VideoList: feedVideos,
-			NextTime:  nextTime,
-			HasMore:   hasMore,
-		}
-		return resp, nil
+// ListByFollowing 以 MySQL 作为关注流正确性基准，不缓存整页的关注关系和点赞状态。
+func (f *FeedService) ListByFollowing(ctx context.Context, limit int, cursor *FollowingCursor, viewerAccountID uint) (ListByFollowingResponse, error) {
+	if viewerAccountID == 0 {
+		return ListByFollowingResponse{}, fmt.Errorf("following feed requires an authenticated viewer")
 	}
-	var cacheKey string
-	if viewerAccountID != 0 && f.rediscache != nil {
-		before := int64(0)
-		if !latestBefore.IsZero() {
-			before = latestBefore.Unix()
-		}
-		cacheKey = f.rediscache.Key("feed:listByFollowing:limit=%d:accountID=%d:before=%d", limit, viewerAccountID, before)
-		cacheCtx, cancel := context.WithTimeout(ctx, 50*time.Millisecond)
-		defer cancel()
-
-		b, err := f.rediscache.GetBytes(cacheCtx, cacheKey)
-		if err == nil {
-			var cached ListByFollowingResponse
-			if err := json.Unmarshal(b, &cached); err == nil {
-				return cached, nil
-			}
-		} else if rediscache.IsMiss(err) { // 缓存未命中
-			lockKey := "lock:" + cacheKey
-			// 缓存未命中，尝试加锁
-			token, locked, _ := f.rediscache.Lock(cacheCtx, lockKey, 500*time.Millisecond)
-			if locked {
-				defer func() { _ = f.rediscache.Unlock(context.Background(), lockKey, token) }()
-				if b, err := f.rediscache.GetBytes(cacheCtx, cacheKey); err == nil {
-					var cached ListByFollowingResponse
-					if err := json.Unmarshal(b, &cached); err == nil {
-						return cached, nil
-					}
-				} else { // 缓存未命中，从数据库中查询
-					resp, err := doListByFollowingFromDB()
-					if err != nil {
-						return ListByFollowingResponse{}, err
-					}
-					if b, err := json.Marshal(resp); err == nil {
-						_ = f.rediscache.SetBytes(cacheCtx, cacheKey, b, f.cacheTTL)
-					}
-					return resp, nil
-				}
-			} else {
-				for i := 0; i < 5; i++ {
-					time.Sleep(20 * time.Millisecond)
-					if b, err := f.rediscache.GetBytes(cacheCtx, cacheKey); err == nil {
-						var cached ListByFollowingResponse
-						if err := json.Unmarshal(b, &cached); err == nil {
-							return cached, nil
-						}
-					}
-				}
-			}
-		}
+	if limit <= 0 || limit > 50 {
+		limit = 10
 	}
-
-	resp, err := doListByFollowingFromDB()
+	// 多查一条只用于判断下一页；游标必须取实际返回的最后一条。
+	videos, err := f.repo.ListByFollowing(ctx, limit+1, viewerAccountID, cursor)
 	if err != nil {
 		return ListByFollowingResponse{}, err
 	}
-	if cacheKey != "" {
-		if b, err := json.Marshal(resp); err == nil {
-			cacheCtx, cancel := context.WithTimeout(ctx, 50*time.Millisecond)
-			defer cancel()
-			_ = f.rediscache.SetBytes(cacheCtx, cacheKey, b, f.cacheTTL)
-		}
+	hasMore := len(videos) > limit
+	if hasMore {
+		videos = videos[:limit]
+	}
+	items, err := f.buildFeedVideos(ctx, videos, viewerAccountID)
+	if err != nil {
+		return ListByFollowingResponse{}, err
+	}
+	resp := ListByFollowingResponse{VideoList: items, HasMore: hasMore}
+	if hasMore {
+		last := videos[len(videos)-1]
+		resp.NextCursor = &FollowingCursor{Time: last.CreateTime, ID: last.ID}
 	}
 	return resp, nil
 }
