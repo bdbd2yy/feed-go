@@ -15,7 +15,7 @@ func FollowingMember(at time.Time, id uint) string {
 	return fmt.Sprintf("%s:%020d", at.UTC().Format("20060102150405.000000000"), id)
 }
 
-var appendFollowingScript = goredis.NewScript(`
+const appendFollowingLua = `
 do
  if redis.call('EXISTS', KEYS[2]) == 1 then
   redis.call('ZADD', KEYS[3], 0, ARGV[1])
@@ -33,7 +33,9 @@ if ARGV[4] == '0' then
  redis.call('PEXPIRE', KEYS[1], ARGV[3])
 end
 return 1
-`)
+`
+
+var appendFollowingScript = goredis.NewScript(appendFollowingLua)
 
 // AppendFollowingIndex 原子地追加与裁剪索引。existingOnly 用于 inbox：
 // 缺失时不创建，已有时保留原 TTL，避免发布事件持续续期闲置用户的缓存。
@@ -119,4 +121,26 @@ return 1
 `)
 	n, err := script.Run(ctx, c.rdb, []string{key, key + ":ready"}, ttl.Milliseconds()).Int()
 	return n == 1, err
+}
+
+// AppendFollowingBatch 使用 Pipeline 批量发送独立 Lua 命令，不是 Redis 事务。
+// 直接 EVAL 避免 Pipeline 中 Script.Run 的 NOSCRIPT 回退无法在执行前判断。
+// 任一命令失败整批返回错误，调用方允许从头重试；其余命令可能已成功。
+func (c *Client) AppendFollowingBatch(ctx context.Context, keys []string, member string, capacity int, ttl time.Duration) error {
+	if c == nil || c.rdb == nil {
+		return errors.New("redis client not initialized")
+	}
+	if capacity <= 0 || ttl < time.Millisecond {
+		return errors.New("invalid following index bounds")
+	}
+	if len(keys) == 0 {
+		return nil
+	}
+	_, err := c.rdb.Pipelined(ctx, func(pipe goredis.Pipeliner) error {
+		for _, key := range keys {
+			pipe.Eval(ctx, appendFollowingLua, []string{key, key + ":building", key + ":buffer", key + ":ready"}, member, capacity, ttl.Milliseconds(), "1")
+		}
+		return nil
+	})
+	return err
 }

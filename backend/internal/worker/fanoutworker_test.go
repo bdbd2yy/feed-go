@@ -108,12 +108,12 @@ func TestFanoutPartialFailureAndReplay(t *testing.T) {
 	raw := goredis.NewClient(&goredis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = raw.Close() })
 	cache := rediscache.NewClient(raw, "test:")
-	repo := &fakeFanoutRepo{v: video.Video{ID: 9, AuthorID: 1, CreateTime: time.Now()}, count: 501, failAfter: 500}
-	for i := uint(1); i <= 501; i++ {
+	repo := &fakeFanoutRepo{v: video.Video{ID: 9, AuthorID: 1, CreateTime: time.Now()}, count: 201, failAfter: 100}
+	for i := uint(1); i <= 201; i++ {
 		repo.followers = append(repo.followers, i)
 	}
 	// Only two active inboxes are needed to exercise both follower batches.
-	for _, id := range []uint{1, 501} {
+	for _, id := range []uint{1, 201} {
 		if err := cache.AppendFollowingIndex(ctx, cache.Key("feed:inbox:%d", id), "old", 1000, time.Hour, false); err != nil {
 			t.Fatal(err)
 		}
@@ -127,7 +127,7 @@ func TestFanoutPartialFailureAndReplay(t *testing.T) {
 	if err := w.ProcessVideo(ctx, 9); err != nil {
 		t.Fatal(err)
 	}
-	for _, id := range []uint{1, 501} {
+	for _, id := range []uint{1, 201} {
 		n, err := raw.ZCard(ctx, cache.Key("feed:inbox:%d", id)).Result()
 		if err != nil || n != 2 {
 			t.Fatalf("reader %d replay count=%d err=%v", id, n, err)

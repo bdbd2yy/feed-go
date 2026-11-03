@@ -114,3 +114,62 @@ func TestInboxRebuildFencesExpiredTask(t *testing.T) {
 		t.Fatal("empty snapshot created data key")
 	}
 }
+
+func TestFollowingPipelinePartialFailureAndReplay(t *testing.T) {
+	mr := miniredis.RunT(t)
+	raw := goredis.NewClient(&goredis.Options{Addr: mr.Addr()})
+	defer raw.Close()
+	c := NewClient(raw, "")
+	ctx := context.Background()
+	for _, key := range []string{"first", "last"} {
+		if err := c.AppendFollowingIndex(ctx, key, "A", 2, time.Hour, false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := raw.Set(ctx, "bad", "wrong-type", time.Hour).Err(); err != nil {
+		t.Fatal(err)
+	}
+	token, ok, err := c.BeginInboxRebuild(ctx, "rebuilding", time.Minute)
+	if err != nil || !ok {
+		t.Fatal(err)
+	}
+	mr.FastForward(time.Second)
+	before := mr.TTL("first")
+	keys := []string{"first", "bad", "last", "expired", "rebuilding"}
+	if err := c.AppendFollowingBatch(ctx, keys, "B", 2, time.Hour); err == nil {
+		t.Fatal("pipeline must report a command failure")
+	}
+	// Pipeline 不回滚，坏命令之后的成员仍会执行。
+	for _, key := range []string{"first", "last"} {
+		if got, _ := raw.ZRevRange(ctx, key, 0, -1).Result(); !reflect.DeepEqual(got, []string{"B", "A"}) {
+			t.Fatalf("%s=%v", key, got)
+		}
+	}
+	if mr.Exists("expired") {
+		t.Fatal("pipeline revived inactive inbox")
+	}
+	if mr.TTL("first") != before {
+		t.Fatal("pipeline extended reader TTL")
+	}
+	if err := raw.Del(ctx, "bad").Err(); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.AppendFollowingBatch(ctx, keys, "B", 2, time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	if n, _ := raw.ZCard(ctx, "first").Result(); n != 2 {
+		t.Fatal("replay added duplicate index")
+	}
+	if ok, err := c.FinishInboxRebuild(ctx, "rebuilding", token, []string{"A"}, 2, time.Hour); err != nil || !ok {
+		t.Fatal(err)
+	}
+	if got, _ := raw.ZRevRange(ctx, "rebuilding", 0, -1).Result(); !reflect.DeepEqual(got, []string{"B", "A"}) {
+		t.Fatalf("concurrent buffer=%v", got)
+	}
+	if err := c.AppendFollowingBatch(ctx, keys, "C", 2, time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := raw.ZRevRange(ctx, "first", 0, -1).Result(); !reflect.DeepEqual(got, []string{"C", "B"}) {
+		t.Fatalf("trim=%v", got)
+	}
+}

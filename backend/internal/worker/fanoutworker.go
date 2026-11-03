@@ -77,17 +77,19 @@ func (w *FanoutWorker) ProcessVideo(ctx context.Context, id uint) error {
 	if count >= w.bigVThreshold {
 		return nil
 	} // 大 V 仅维护发件箱，跳过逐粉丝写入。
-	const batchSize = 500
+	const batchSize = 100
 	var after uint
 	for {
 		followers, err := w.repo.followersAfter(ctx, v.AuthorID, after, batchSize)
 		if err != nil {
 			return err
 		}
-		for _, follower := range followers {
-			if err := w.cache.AppendFollowingIndex(ctx, w.cache.Key("feed:inbox:%d", follower), member, w.capacity, w.ttl, true); err != nil {
-				return err
-			}
+		keys := make([]string, len(followers))
+		for i, follower := range followers {
+			keys[i] = w.cache.Key("feed:inbox:%d", follower)
+		}
+		if err := w.cache.AppendFollowingBatch(ctx, keys, member, w.capacity, w.ttl); err != nil {
+			return err
 		}
 		if len(followers) < batchSize {
 			return nil
