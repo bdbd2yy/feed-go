@@ -14,39 +14,57 @@ import (
 	"gorm.io/gorm"
 )
 
-func StartOutboxPoller(db *gorm.DB, tmq *rabbitmq.TimelineMQ) {
-	if db == nil || tmq == nil {
-		log.Printf("Outbox poller disabled: timeline mq is not initialized")
+type videoPublisher interface {
+	PublishVideo(context.Context, uint, time.Time) error
+}
+
+// 两路均收到 broker confirm 后才允许删除 Outbox。失败时重投两路，而非跨队列事务。
+func publishOutbox(ctx context.Context, msg video.OutboxMsg, timeline, fanout videoPublisher) error {
+	if err := timeline.PublishVideo(ctx, msg.VideoID, msg.CreateTime); err != nil {
+		return fmt.Errorf("timeline publish: %w", err)
+	}
+	if err := fanout.PublishVideo(ctx, msg.VideoID, msg.CreateTime); err != nil {
+		return fmt.Errorf("fanout publish: %w", err)
+	}
+	return nil
+}
+
+func StartOutboxPoller(db *gorm.DB, tmq *rabbitmq.TimelineMQ, fmq *rabbitmq.FanoutMQ) {
+	if db == nil || tmq == nil || fmq == nil {
+		log.Printf("Outbox disabled: both feed publishers are required")
 		return
 	}
-
 	go func() {
 		for {
 			var messages []video.OutboxMsg
-
 			err := db.Where("status = ?", "pending").Order("create_time ASC").Limit(100).Find(&messages).Error
-
 			if err != nil || len(messages) == 0 {
-				time.Sleep(1 * time.Second)
+				time.Sleep(time.Second)
 				continue
 			}
-
+			failed := false
 			for _, msg := range messages {
-				err := tmq.PublishVideo(context.Background(), msg.VideoID, msg.CreateTime)
-
-				if err == nil {
-					if err := db.Delete(&msg).Error; err != nil {
-						log.Printf("删除 outbox 消息失败: id=%d, err=%v", msg.ID, err)
-					}
-				} else {
-					log.Printf("投递MQ失败: VideoID: %d, err: %v", msg.VideoID, err)
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				err := publishOutbox(ctx, msg, tmq, fmq)
+				cancel()
+				if err != nil {
+					failed = true
+					log.Printf("Outbox retained: video=%d err=%v", msg.VideoID, err)
+					continue
 				}
+				if err := db.Delete(&msg).Error; err != nil {
+					failed = true
+					log.Printf("Outbox delete failed: id=%d err=%v", msg.ID, err)
+				}
+			}
+			if failed {
+				time.Sleep(time.Second)
 			}
 		}
 	}()
 }
 
-func StartConsumer(tmq *rabbitmq.TimelineMQ, queueName string, redisClient *rediscache.Client, rmq *rabbitmq.RabbitMQ, fanout *FanoutWorker) {
+func StartConsumer(tmq *rabbitmq.TimelineMQ, queueName string, redisClient *rediscache.Client, rmq *rabbitmq.RabbitMQ) {
 	if tmq == nil || rmq == nil || rmq.Conn == nil {
 		log.Printf("Timeline consumer disabled: rabbitmq is not initialized")
 		return
@@ -112,14 +130,6 @@ func StartConsumer(tmq *rabbitmq.TimelineMQ, queueName string, redisClient *redi
 					log.Printf("Timeline consumer: ZRem失败: %v", err)
 				}
 
-				if fanout != nil {
-					if err := fanout.ProcessVideo(ctx, event.VideoID); err != nil {
-						log.Printf("Timeline consumer: fanout failed: video=%d err=%v", event.VideoID, err)
-						msg.Nack(false, true)
-						cancel()
-						continue
-					}
-				}
 				msg.Ack(false)
 				cancel()
 			}

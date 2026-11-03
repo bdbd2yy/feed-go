@@ -4,12 +4,10 @@ import (
 	"context"
 	"errors"
 	"time"
-
-	amqp "github.com/rabbitmq/amqp091-go"
 )
 
 type TimelineMQ struct {
-	ch *amqp.Channel
+	publisher *feedPublisher
 }
 
 const (
@@ -27,36 +25,20 @@ type TimelineEvent struct {
 }
 
 func NewTimelineMQ(base *RabbitMQ) (*TimelineMQ, error) {
-	if base == nil {
-		return nil, errors.New("rabbitmq base is nil")
-	}
-	ch, err := base.NewChannel()
+	p, err := newFeedPublisher(base, timelineExchange, timelineQueue, timelineBindingKey, timelinePublishRK)
 	if err != nil {
 		return nil, err
 	}
-	if err := DeclareTopic(ch, timelineExchange, timelineQueue, timelineBindingKey); err != nil {
-		ch.Close()
-		return nil, err
-	}
-	return &TimelineMQ{ch: ch}, nil
+	return &TimelineMQ{publisher: p}, nil
 }
 
-func (t *TimelineMQ) PublishVideo(ctx context.Context, videoID uint, createTime time.Time) error {
-	if t == nil || t.ch == nil {
-		return errors.New("timeline mq is not initialized")
+func (t *TimelineMQ) PublishVideo(ctx context.Context, id uint, at time.Time) error {
+	if t == nil || t.publisher == nil {
+		return errors.New("timeline mq not initialized")
 	}
-	if videoID == 0 {
-		return errors.New("videoID are required")
-	}
-	id, err := newEventID(16)
+	event, err := feedEvent(id, at)
 	if err != nil {
 		return err
 	}
-	timeline := TimelineEvent{
-		EventID:    id,
-		VideoID:    videoID,
-		CreateTime: createTime.UnixMilli(),
-		OccurredAt: time.Now(),
-	}
-	return PublishJSON(ctx, t.ch, timelineExchange, timelinePublishRK, timeline)
+	return t.publisher.publish(ctx, event)
 }
