@@ -444,18 +444,9 @@ func (f *FeedService) ListByPopularity(ctx context.Context, limit int, reqAsOf i
 				}
 			}
 
-			videos, err := f.repo.GetByIDs(ctx, ids)
+			// 实体读取复用最新流的三级读取，并保留榜单 ID 顺序。
+			ordered, err := f.GetVideoByIDs(ctx, ids)
 			if err == nil {
-				byID := make(map[uint]*video.Video, len(videos))
-				for _, v := range videos {
-					byID[v.ID] = v
-				}
-				ordered := make([]*video.Video, 0, len(ids))
-				for _, id := range ids {
-					if v := byID[id]; v != nil {
-						ordered = append(ordered, v)
-					}
-				}
 				items, err := f.buildFeedVideos(ctx, ordered, viewerAccountID)
 				if err != nil {
 					return ListByPopularityResponse{}, err
@@ -463,8 +454,8 @@ func (f *FeedService) ListByPopularity(ctx context.Context, limit int, reqAsOf i
 				resp := ListByPopularityResponse{
 					VideoList:  items,
 					AsOf:       asOf.Unix(),
-					NextOffset: offset + len(items),
-					HasMore:    len(items) == limit,
+					NextOffset: offset + len(members), // 按消费的榜单位置推进，跳过缺失实体
+					HasMore:    len(members) == limit,
 				}
 				if len(ordered) > 0 {
 					last := ordered[len(ordered)-1]
