@@ -216,4 +216,5 @@ GitHub Actions 配置位于 `.github/workflows/ci.yml`，在 Pull Request 以及
 - 本地配置默认开启 pprof：API `localhost:6060`，Worker `localhost:6061`。
 - 上传文件写入 `backend/.run/uploads`；Docker 环境挂载到 `backend_uploads` volume。
 - Redis 用于 Token 缓存、视频实体缓存、Feed 时间线、热榜窗口、分片上传会话。
+- 详情与 Feed 共用 Redis 视频实体 key，减少重复存储并补齐写后失效；Feed 保留原有本地缓存、读取与回填策略。
 - RabbitMQ Topic Exchange 覆盖点赞、评论、关注、热度、视频时间线事件，并配置 DLX。

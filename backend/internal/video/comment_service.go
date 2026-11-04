@@ -9,6 +9,7 @@ import (
 	"log"
 	"regexp"
 	"strings"
+	"time"
 
 	"gorm.io/gorm"
 )
@@ -84,6 +85,12 @@ func (s *CommentService) Publish(ctx context.Context, comment *Comment) error {
 				UpdateColumn("popularity", gorm.Expr("popularity + 1")).Error
 		}); err != nil {
 			return err
+		}
+		// 同步事务提交成功后失效实体缓存；缓存失败不回滚数据库。
+		if s.cache != nil {
+			opCtx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+			_ = s.cache.Del(opCtx, s.cache.Key("video:entity:%d", comment.VideoID))
+			cancel()
 		}
 	}
 

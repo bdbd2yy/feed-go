@@ -82,7 +82,7 @@ func (vs *VideoService) Publish(ctx context.Context, video *Video) error {
 
 }
 
-// Delete 只允许视频作者删除作品，成功后清理详情缓存。
+// Delete 只允许视频作者删除作品，成功后清理共享 Redis 实体缓存。
 func (vs *VideoService) Delete(ctx context.Context, id uint, authorID uint) error {
 	video, err := vs.repo.GetByID(ctx, id)
 	if err != nil {
@@ -98,9 +98,9 @@ func (vs *VideoService) Delete(ctx context.Context, id uint, authorID uint) erro
 	if err := vs.repo.DeleteVideo(ctx, id); err != nil {
 		return err
 	}
-	// 当前方法只清理详情缓存；其他派生索引的有效性需由各自读取路径处理。
+	// 清理详情与 Feed 共用的实体 key；Feed 本地缓存仍按原 TTL 过期。
 	if vs.cache != nil {
-		cacheKey := vs.cache.Key("video:detail:id=%d", id)
+		cacheKey := vs.cache.Key("video:entity:%d", id)
 		_ = vs.cache.Del(context.Background(), cacheKey)
 	}
 	return nil
@@ -117,7 +117,7 @@ func (vs *VideoService) ListByAuthorID(ctx context.Context, authorID uint) ([]Vi
 
 // GetDetail 优先读详情缓存，未命中时用短租约锁减轻热点视频的缓存击穿。
 func (vs *VideoService) GetDetail(ctx context.Context, id uint) (*Video, error) {
-	cacheKey := vs.cache.Key("video:detail:id=%d", id)
+	cacheKey := vs.cache.Key("video:entity:%d", id)
 
 	// 每次缓存操作限制为 50ms；读失败或 JSON 损坏按未命中处理。
 	getCached := func() (*Video, bool) {
@@ -212,6 +212,11 @@ func (vs *VideoService) UpdateLikesCount(ctx context.Context, id uint, likesCoun
 	if err := vs.repo.UpdateLikesCount(ctx, id, likesCount); err != nil {
 		return err
 	}
+	if vs.cache != nil {
+		opCtx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+		_ = vs.cache.Del(opCtx, vs.cache.Key("video:entity:%d", id))
+		cancel()
+	}
 	return nil
 }
 
@@ -219,6 +224,12 @@ func (vs *VideoService) UpdateLikesCount(ctx context.Context, id uint, likesCoun
 func (vs *VideoService) UpdatePopularity(ctx context.Context, id uint, change int64) error {
 	if err := vs.repo.UpdatePopularity(ctx, id, change); err != nil {
 		return err
+	}
+
+	if vs.cache != nil {
+		opCtx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+		_ = vs.cache.Del(opCtx, vs.cache.Key("video:entity:%d", id))
+		cancel()
 	}
 
 	// MQ 成功表示热榜更新已交给异步 Worker，而不是 Redis 已经完成更新。
@@ -230,9 +241,6 @@ func (vs *VideoService) UpdatePopularity(ctx context.Context, id uint, change in
 
 	// 消息投递不可用时直接更新当前分钟窗口，并失效详情缓存；缓存失败不回滚数据库。
 	if vs.cache != nil {
-		// 1) 详情缓存：直接失效（最简单靠谱）
-		_ = vs.cache.Del(context.Background(), vs.cache.Key("video:detail:id=%d", id))
-
 		// 2) 热榜：写到“时间窗ZSET”，不要用 detail key
 		now := time.Now().UTC().Truncate(time.Minute)
 		windowKey := vs.cache.Key("hot:video:1m:%s", now.Format("200601021504"))

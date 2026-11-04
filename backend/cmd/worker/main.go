@@ -17,8 +17,8 @@ import (
 	"syscall"
 	"time"
 
-	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/joho/godotenv"
+	amqp "github.com/rabbitmq/amqp091-go"
 	"gorm.io/gorm"
 )
 
@@ -190,10 +190,10 @@ func main() {
 		return worker.NewSocialWorker(ch, socialRepo, socialQueue).Run(ctx)
 	})
 	go runWorkerWithRetry(ctx, "LikeWorker", conn, func(ch *amqp.Channel) error {
-		return worker.NewLikeWorker(ch, likeRepo, videoRepo, likeQueue).Run(ctx)
+		return worker.NewLikeWorker(ch, cache, likeRepo, videoRepo, likeQueue).Run(ctx)
 	})
 	go runWorkerWithRetry(ctx, "CommentWorker", conn, func(ch *amqp.Channel) error {
-		return worker.NewCommentWorker(ch, commentRepo, videoRepo, commentQueue).Run(ctx)
+		return worker.NewCommentWorker(ch, cache, commentRepo, videoRepo, commentQueue).Run(ctx)
 	})
 	if cache != nil {
 		go runWorkerWithRetry(ctx, "PopularityWorker", conn, func(ch *amqp.Channel) error {

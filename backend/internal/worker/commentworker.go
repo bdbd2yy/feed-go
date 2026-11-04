@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"feedsystem_video_go/internal/middleware/rabbitmq"
+	rediscache "feedsystem_video_go/internal/middleware/redis"
 	"feedsystem_video_go/internal/video"
 	"log"
 	"strings"
@@ -14,14 +15,15 @@ import (
 )
 
 type CommentWorker struct {
+	cache    *rediscache.Client
 	ch       *amqp.Channel
 	comments *video.CommentRepository
 	videos   *video.VideoRepository
 	queue    string
 }
 
-func NewCommentWorker(ch *amqp.Channel, comments *video.CommentRepository, videos *video.VideoRepository, queue string) *CommentWorker {
-	return &CommentWorker{ch: ch, comments: comments, videos: videos, queue: queue}
+func NewCommentWorker(ch *amqp.Channel, cache *rediscache.Client, comments *video.CommentRepository, videos *video.VideoRepository, queue string) *CommentWorker {
+	return &CommentWorker{cache: cache, ch: ch, comments: comments, videos: videos, queue: queue}
 }
 
 func (w *CommentWorker) Run(ctx context.Context) error {
@@ -120,7 +122,15 @@ func (w *CommentWorker) applyPublish(ctx context.Context, evt *rabbitmq.CommentE
 	if err := w.comments.CreateComment(ctx, c); err != nil {
 		return err
 	}
-	return w.videos.ChangePopularity(ctx, evt.VideoID, 1)
+	if err := w.videos.ChangePopularity(ctx, evt.VideoID, 1); err != nil {
+		return err
+	}
+	if w.cache != nil {
+		opCtx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+		_ = w.cache.Del(opCtx, w.cache.Key("video:entity:%d", evt.VideoID))
+		cancel()
+	}
+	return nil
 }
 
 func (w *CommentWorker) applyDelete(ctx context.Context, evt *rabbitmq.CommentEvent) error {

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"feedsystem_video_go/internal/middleware/rabbitmq"
+	rediscache "feedsystem_video_go/internal/middleware/redis"
 	"feedsystem_video_go/internal/video"
 	"log"
 	"time"
@@ -13,14 +14,15 @@ import (
 )
 
 type LikeWorker struct {
+	cache  *rediscache.Client
 	ch     *amqp.Channel
 	likes  *video.LikeRepository
 	videos *video.VideoRepository
 	queue  string
 }
 
-func NewLikeWorker(ch *amqp.Channel, likes *video.LikeRepository, videos *video.VideoRepository, queue string) *LikeWorker {
-	return &LikeWorker{ch: ch, likes: likes, videos: videos, queue: queue}
+func NewLikeWorker(ch *amqp.Channel, cache *rediscache.Client, likes *video.LikeRepository, videos *video.VideoRepository, queue string) *LikeWorker {
+	return &LikeWorker{cache: cache, ch: ch, likes: likes, videos: videos, queue: queue}
 }
 
 func (w *LikeWorker) Run(ctx context.Context) error {
@@ -117,6 +119,13 @@ func (w *LikeWorker) applyLike(ctx context.Context, userID, videoID uint) error 
 		AccountID: userID,
 		CreatedAt: time.Now(),
 	})
+	if err == nil {
+		if w.cache != nil {
+			opCtx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+			_ = w.cache.Del(opCtx, w.cache.Key("video:entity:%d", videoID))
+			cancel()
+		}
+	}
 	return err
 }
 
@@ -131,5 +140,12 @@ func (w *LikeWorker) applyUnlike(ctx context.Context, userID, videoID uint) erro
 
 	// 删除点赞记录与扣减计数在同一事务内完成；重复消费不改变计数。
 	_, err = w.likes.ApplyUnlikeTx(ctx, videoID, userID)
+	if err == nil {
+		if w.cache != nil {
+			opCtx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+			_ = w.cache.Del(opCtx, w.cache.Key("video:entity:%d", videoID))
+			cancel()
+		}
+	}
 	return err
 }

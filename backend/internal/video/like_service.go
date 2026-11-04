@@ -102,6 +102,12 @@ func (s *LikeService) Like(ctx context.Context, like *Like) error {
 		if err != nil {
 			return err
 		}
+		// 同步事务提交成功后失效实体缓存；缓存失败不回滚数据库。
+		if s.cache != nil {
+			opCtx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+			_ = s.cache.Del(opCtx, s.cache.Key("video:entity:%d", like.VideoID))
+			cancel()
+		}
 	}
 
 	// 热度事件未成功投递时，只直接补 Redis 分钟热榜，不再次改数据库计数。
@@ -178,6 +184,12 @@ func (s *LikeService) Unlike(ctx context.Context, like *Like) error {
 		})
 		if err != nil {
 			return err
+		}
+		// 同步事务提交成功后失效实体缓存；缓存失败不回滚数据库。
+		if s.cache != nil {
+			opCtx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+			_ = s.cache.Del(opCtx, s.cache.Key("video:entity:%d", like.VideoID))
+			cancel()
 		}
 	}
 
